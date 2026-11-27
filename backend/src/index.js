@@ -3,6 +3,9 @@ const cors = require('cors');
 require('dotenv').config();
 const pool = require('./config/db');
 const authRoutes = require('./routes/auth.routes');
+const loaiVanBanRoutes = require('./routes/loaiVanBan.routes');
+const userRoutes = require('./routes/user.routes');
+const auditLogRoutes = require('./routes/auditLog.routes');
 
 const app = express();
 app.use(cors());
@@ -27,6 +30,11 @@ app.get('/api/health', async (req, res) => {
 
 // Gắn nhóm API Xác thực & Phân quyền
 app.use('/api/auth', authRoutes);
+
+// Gắn nhóm API Loại văn bản, Người dùng và Nhật ký hoạt động
+app.use('/api/loai-van-ban', loaiVanBanRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/nhat-ky', auditLogRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

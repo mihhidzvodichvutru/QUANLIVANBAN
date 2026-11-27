@@ -1,1 +1,22 @@
 @import "tailwindcss";
+
+@theme {
+  --font-sans: "Be Vietnam Pro", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-paper: #FAF9F6;
+  --color-pine: #14532D;
+  --color-pine-hover: #166534;
+  --color-pine-soft: #F0FDF4;
+  --color-ink: #1C1917;
+  --color-danger: #991B1B;
+}
+
+@layer base {
+  body {
+    background-color: #FAF9F6;
+    color: #1C1917;
+    font-family: "Be Vietnam Pro", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}

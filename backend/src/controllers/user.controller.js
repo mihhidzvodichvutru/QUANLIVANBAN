@@ -85,6 +85,7 @@ exports.updateUser = async (req, res) => {
   const { id } = req.params;
   const { HoTen, VaiTro, MatKhau } = req.body;
   const adminId = getCurrentUserId(req);
+  let targetUsername = id;
 
   try {
     const [existing] = await pool.query(
@@ -99,14 +100,29 @@ exports.updateUser = async (req, res) => {
     }
 
     const targetUser = existing[0];
+    targetUsername = targetUser.TenDangNhap;
 
-    // Chặn Admin tự tước/đổi vai trò của chính mình
+    // 1. Chặn Admin tự tước/đổi vai trò của chính mình
     if (id === adminId && VaiTro !== undefined && VaiTro !== targetUser.VaiTro) {
-      await logActivity(adminId, `Cập nhật thông tin tài khoản: ${targetUser.TenDangNhap}`, 'Thất bại');
+      await logActivity(adminId, `Cập nhật thông tin tài khoản: ${targetUsername}`, 'Thất bại');
       return res.status(400).json({
         status: 'ERROR',
         message: 'Không thể tự thay đổi vai trò của tài khoản đang đăng nhập!',
       });
+    }
+
+    // 2. Bảo vệ tài khoản Admin cuối cùng khi bị hạ quyền
+    if (targetUser.VaiTro === 'Admin' && VaiTro !== undefined && VaiTro !== 'Admin') {
+      const [[{ totalAdmins }]] = await pool.query(
+        "SELECT COUNT(*) AS totalAdmins FROM NguoiDung WHERE VaiTro = 'Admin'"
+      );
+      if (totalAdmins <= 1) {
+        await logActivity(adminId, `Hạ quyền Quản trị viên cuối cùng: ${targetUsername}`, 'Thất bại');
+        return res.status(400).json({
+          status: 'ERROR',
+          message: 'Không thể xóa hoặc hạ quyền tài khoản Quản trị viên cuối cùng của hệ thống!',
+        });
+      }
     }
 
     const updates = [];
@@ -136,14 +152,13 @@ exports.updateUser = async (req, res) => {
     params.push(id);
     await pool.query(`UPDATE NguoiDung SET ${updates.join(', ')} WHERE MaNguoiDung = ?`, params);
 
-    // Ghi nhật ký chuẩn theo Mục 5.2 (không ghi mật khẩu)
     if (isPasswordReset && !isInfoUpdated) {
-      await logActivity(adminId, `Cấp lại mật khẩu cho tài khoản: ${targetUser.TenDangNhap}`, 'Thành công');
+      await logActivity(adminId, `Cấp lại mật khẩu cho tài khoản: ${targetUsername}`, 'Thành công');
     } else if (isInfoUpdated && !isPasswordReset) {
-      await logActivity(adminId, `Cập nhật thông tin tài khoản: ${targetUser.TenDangNhap}`, 'Thành công');
+      await logActivity(adminId, `Cập nhật thông tin tài khoản: ${targetUsername}`, 'Thành công');
     } else {
-      await logActivity(adminId, `Cập nhật thông tin tài khoản: ${targetUser.TenDangNhap}`, 'Thành công');
-      await logActivity(adminId, `Cấp lại mật khẩu cho tài khoản: ${targetUser.TenDangNhap}`, 'Thành công');
+      await logActivity(adminId, `Cập nhật thông tin tài khoản: ${targetUsername}`, 'Thành công');
+      await logActivity(adminId, `Cấp lại mật khẩu cho tài khoản: ${targetUsername}`, 'Thành công');
     }
 
     const [updatedRows] = await pool.query(
@@ -158,7 +173,7 @@ exports.updateUser = async (req, res) => {
     });
   } catch (error) {
     console.error('[Users] updateUser error:', error);
-    await logActivity(adminId, `Cập nhật thông tin tài khoản: ${id}`, 'Thất bại');
+    await logActivity(adminId, `Cập nhật thông tin tài khoản: ${targetUsername}`, 'Thất bại');
     return res.status(500).json({
       status: 'ERROR',
       message: 'Lỗi hệ thống khi cập nhật tài khoản.',
@@ -170,9 +185,15 @@ exports.updateUser = async (req, res) => {
 exports.deleteUser = async (req, res) => {
   const { id } = req.params;
   const adminId = getCurrentUserId(req);
+  let targetUsername = id;
 
-  // Chặn Admin tự xóa chính mình
+  // 1. Chặn Admin tự xóa chính mình (có ghi Audit Log Thất bại)
   if (id === adminId) {
+    await logActivity(
+      adminId,
+      `Xóa tài khoản: ${req.user?.TenDangNhap || adminId}`,
+      'Thất bại'
+    );
     return res.status(400).json({
       status: 'ERROR',
       message: 'Không thể tự xóa tài khoản đang đăng nhập!',
@@ -181,7 +202,7 @@ exports.deleteUser = async (req, res) => {
 
   try {
     const [existing] = await pool.query(
-      'SELECT MaNguoiDung, TenDangNhap FROM NguoiDung WHERE MaNguoiDung = ? LIMIT 1',
+      'SELECT MaNguoiDung, TenDangNhap, VaiTro FROM NguoiDung WHERE MaNguoiDung = ? LIMIT 1',
       [id]
     );
     if (existing.length === 0) {
@@ -191,10 +212,25 @@ exports.deleteUser = async (req, res) => {
       });
     }
 
-    const tenDangNhap = existing[0].TenDangNhap;
+    const targetUser = existing[0];
+    targetUsername = targetUser.TenDangNhap;
+
+    // 2. Bảo vệ tài khoản Admin cuối cùng khi xóa
+    if (targetUser.VaiTro === 'Admin') {
+      const [[{ totalAdmins }]] = await pool.query(
+        "SELECT COUNT(*) AS totalAdmins FROM NguoiDung WHERE VaiTro = 'Admin'"
+      );
+      if (totalAdmins <= 1) {
+        await logActivity(adminId, `Xóa Quản trị viên cuối cùng: ${targetUsername}`, 'Thất bại');
+        return res.status(400).json({
+          status: 'ERROR',
+          message: 'Không thể xóa hoặc hạ quyền tài khoản Quản trị viên cuối cùng của hệ thống!',
+        });
+      }
+    }
 
     await pool.query('DELETE FROM NguoiDung WHERE MaNguoiDung = ?', [id]);
-    await logActivity(adminId, `Xóa tài khoản: ${tenDangNhap}`, 'Thành công');
+    await logActivity(adminId, `Xóa tài khoản: ${targetUsername}`, 'Thành công');
 
     return res.status(200).json({
       status: 'OK',
@@ -202,7 +238,7 @@ exports.deleteUser = async (req, res) => {
     });
   } catch (error) {
     console.error('[Users] deleteUser error:', error);
-    await logActivity(adminId, `Xóa tài khoản: ${id}`, 'Thất bại');
+    await logActivity(adminId, `Xóa tài khoản: ${targetUsername}`, 'Thất bại');
 
     if (error.code === 'ER_ROW_IS_REFERENCED_2') {
       return res.status(409).json({
@@ -213,6 +249,55 @@ exports.deleteUser = async (req, res) => {
     return res.status(500).json({
       status: 'ERROR',
       message: 'Lỗi hệ thống khi xóa tài khoản.',
+    });
+  }
+};
+
+// PATCH /api/users/change-password (Cả 3 vai trò tự đổi mật khẩu của chính mình)
+exports.changePassword = async (req, res) => {
+  const { MatKhauCu, MatKhauMoi } = req.body;
+  const userId = getCurrentUserId(req);
+
+  try {
+    const [rows] = await pool.query(
+      'SELECT MaNguoiDung, TenDangNhap, MatKhauMaHoa FROM NguoiDung WHERE MaNguoiDung = ? LIMIT 1',
+      [userId]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({
+        status: 'ERROR',
+        message: 'Không tìm thấy tài khoản.',
+      });
+    }
+
+    const currentUser = rows[0];
+    const isOldPasswordValid = await bcrypt.compare(MatKhauCu, currentUser.MatKhauMaHoa);
+    if (!isOldPasswordValid) {
+      await logActivity(userId, 'Tự đổi mật khẩu cá nhân', 'Thất bại');
+      return res.status(400).json({
+        status: 'ERROR',
+        message: 'Mật khẩu hiện tại không chính xác.',
+      });
+    }
+
+    const newHashedPassword = await bcrypt.hash(MatKhauMoi, 10);
+    await pool.query(
+      'UPDATE NguoiDung SET MatKhauMaHoa = ? WHERE MaNguoiDung = ?',
+      [newHashedPassword, userId]
+    );
+
+    await logActivity(userId, 'Tự đổi mật khẩu cá nhân', 'Thành công');
+
+    return res.status(200).json({
+      status: 'OK',
+      message: 'Đổi mật khẩu thành công.',
+    });
+  } catch (error) {
+    console.error('[Users] changePassword error:', error);
+    await logActivity(userId, 'Tự đổi mật khẩu cá nhân', 'Thất bại');
+    return res.status(500).json({
+      status: 'ERROR',
+      message: 'Lỗi hệ thống khi đổi mật khẩu.',
     });
   }
 };

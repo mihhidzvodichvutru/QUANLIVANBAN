@@ -15,7 +15,7 @@ exports.validateCreateUser = (req, res, next) => {
   const { TenDangNhap, MatKhau, HoTen, VaiTro } = req.body || {};
   const errors = [];
 
-  // 1. TenDangNhap (trim trước khi kiểm tra)
+  // 1. TenDangNhap (trim và chuẩn hóa chữ thường trước khi lưu)
   const tenDangNhapClean = typeof TenDangNhap === 'string' ? TenDangNhap.trim() : '';
   if (!USERNAME_REGEX.test(tenDangNhapClean)) {
     errors.push({
@@ -55,7 +55,7 @@ exports.validateCreateUser = (req, res, next) => {
     return sendValidationError(res, errors);
   }
 
-  req.body.TenDangNhap = tenDangNhapClean;
+  req.body.TenDangNhap = tenDangNhapClean.toLowerCase();
   req.body.HoTen = hoTenClean;
   next();
 };
@@ -107,6 +107,41 @@ exports.validateUpdateUser = (req, res, next) => {
           'Mật khẩu phải dài 8–64 ký tự, bao gồm ít nhất 1 chữ hoa, 1 chữ thường, 1 chữ số và không chứa khoảng trắng.',
       });
     }
+  }
+
+  if (errors.length > 0) {
+    return sendValidationError(res, errors);
+  }
+
+  next();
+};
+
+// Kiểm tra đầu vào cho API tự đổi mật khẩu cá nhân (PATCH /api/users/change-password)
+exports.validateChangePassword = (req, res, next) => {
+  const { MatKhauCu, MatKhauMoi } = req.body || {};
+  const errors = [];
+
+  // Không áp Regex lên MatKhauCu để tương thích các tài khoản cũ (VD: 123456), không trim
+  const hasOldPassword = typeof MatKhauCu === 'string' && MatKhauCu.length > 0;
+  if (!hasOldPassword) {
+    errors.push({
+      field: 'MatKhauCu',
+      message: 'Vui lòng nhập mật khẩu hiện tại.',
+    });
+  }
+
+  const isValidNewPassword = typeof MatKhauMoi === 'string' && PASSWORD_REGEX.test(MatKhauMoi);
+  if (!isValidNewPassword) {
+    errors.push({
+      field: 'MatKhauMoi',
+      message:
+        'Mật khẩu phải dài 8–64 ký tự, bao gồm ít nhất 1 chữ hoa, 1 chữ thường, 1 chữ số và không chứa khoảng trắng.',
+    });
+  } else if (hasOldPassword && MatKhauMoi === MatKhauCu) {
+    errors.push({
+      field: 'MatKhauMoi',
+      message: 'Mật khẩu mới không được trùng với mật khẩu hiện tại.',
+    });
   }
 
   if (errors.length > 0) {
